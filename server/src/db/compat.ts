@@ -32,6 +32,7 @@ export interface Statement {
 export class CompatDatabase {
   private _db: SqlJsDatabase;
   private _path: string | null;
+  private _inTransaction = false;
 
   constructor(filePath: string) {
     if (!SQL) throw new Error('sql.js not initialized. Call initSqlJsRuntime() first.');
@@ -47,8 +48,9 @@ export class CompatDatabase {
     }
   }
 
-  /** Flush in-memory DB to disk */
+  /** Flush in-memory DB to disk (skipped during transactions — flushed on COMMIT) */
   private _persist(): void {
+    if (this._inTransaction) return;
     if (this._path) {
       const dir = path.dirname(this._path);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -63,8 +65,6 @@ export class CompatDatabase {
   }
 
   pragma(pragmaStr: string): any {
-    // better-sqlite3 style: db.pragma('journal_mode = WAL')
-    // sql.js doesn't return pragma results the same way, just execute it
     try {
       const results = this._db.exec(`PRAGMA ${pragmaStr}`);
       if (results.length > 0 && results[0].values.length > 0) {
@@ -82,7 +82,8 @@ export class CompatDatabase {
 
     return {
       run(...params: any[]): RunResult {
-        db.run(sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
+        db.run(sql, flatParams);
         const changesRow = db.exec('SELECT changes() as c, last_insert_rowid() as r');
         const changes = changesRow[0]?.values[0]?.[0] as number ?? 0;
         const lastInsertRowid = changesRow[0]?.values[0]?.[1] as number ?? 0;
@@ -91,8 +92,9 @@ export class CompatDatabase {
       },
 
       get(...params: any[]): any {
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
         const stmt = db.prepare(sql);
-        stmt.bind(params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        stmt.bind(flatParams);
         if (stmt.step()) {
           const columns = stmt.getColumnNames();
           const values = stmt.get();
@@ -108,8 +110,9 @@ export class CompatDatabase {
       },
 
       all(...params: any[]): any[] {
+        const flatParams = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
         const stmt = db.prepare(sql);
-        stmt.bind(params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+        stmt.bind(flatParams);
         const rows: any[] = [];
         while (stmt.step()) {
           const columns = stmt.getColumnNames();
@@ -128,20 +131,28 @@ export class CompatDatabase {
 
   /**
    * better-sqlite3-compatible transaction wrapper.
-   * Accepts a function, wraps it in BEGIN/COMMIT, rolls back on error.
-   * Returns a callable that executes the transaction when invoked.
+   * Wraps fn in BEGIN/COMMIT. Defers disk persist until COMMIT.
    */
   transaction<T extends (...args: any[]) => any>(fn: T): T {
     const self = this;
     const wrapper = ((...args: any[]) => {
-      self._db.run('BEGIN');
+      self._inTransaction = true;
+      self._db.run('BEGIN TRANSACTION');
       try {
         const result = fn(...args);
         self._db.run('COMMIT');
-        self._persist();
+        self._inTransaction = false;
+        // Persist once after the full transaction
+        if (self._path) {
+          const dir = path.dirname(self._path);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const data = self._db.export();
+          fs.writeFileSync(self._path, Buffer.from(data));
+        }
         return result;
       } catch (err) {
-        self._db.run('ROLLBACK');
+        self._inTransaction = false;
+        try { self._db.run('ROLLBACK'); } catch { /* already rolled back or no txn */ }
         throw err;
       }
     }) as unknown as T;
