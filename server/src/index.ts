@@ -9,11 +9,15 @@ async function main() {
   await initDb();
   const app = createApp();
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-    console.log(`Proxy endpoint: http://0.0.0.0:${PORT}/v1/chat/completions`);
+  const host = process.env.HOST || '0.0.0.0';
+  app.listen(Number(PORT), host, () => {
+    console.log(`Server running on http://${host}:${PORT}`);
+    console.log(`Proxy endpoint: http://${host}:${PORT}/v1/chat/completions`);
     startHealthChecker();
   });
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error('Fatal startup error:', err);
+  process.exit(1);
+});
