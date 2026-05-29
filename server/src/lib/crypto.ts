@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import Database from 'better-sqlite3';
+import type { CompatDatabase } from '../db/compat.js';
 
 const ALGORITHM = 'aes-256-gcm';
 
@@ -41,7 +41,7 @@ function missingKeyError(): Error {
  * Initialize encryption key from env or an explicit local-dev fallback.
  * Must be called after DB is initialized.
  */
-export function initEncryptionKey(db: Database.Database): void {
+export function initEncryptionKey(db: CompatDatabase): void {
   // 1. Check env var
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey && envKey !== PLACEHOLDER_KEY) {
