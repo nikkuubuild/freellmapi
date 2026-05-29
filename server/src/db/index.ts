@@ -6,7 +6,9 @@ import { CompatDatabase, initSqlJsRuntime } from './compat.js';
 import { initEncryptionKey } from '../lib/crypto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, '../../data/freeapi.db');
+// Use DB_PATH env var for persistent storage (e.g. home dir on Hostinger),
+// fallback to local data/ folder for development
+const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '../../data/freeapi.db');
 
 let db: CompatDatabase;
 
